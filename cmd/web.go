@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -21,15 +22,14 @@ func Start(ctx context.Context) {
 	name := config.Viper().GetString("SERVER_NAME")
 	port := config.Viper().GetString("APPLICATION_PORT")
 	ss := config.Viper().GetStringSlice("servers")
-	var cc []raft.Node
+	var nodes []raft.Node
 	for i, s := range ss {
-		cc = append(cc, raft.Node{
+		nodes = append(nodes, raft.Node{
 			Id:     i,
 			Client: client.New(s),
 		})
 	}
-	rt := raft.NewRaft(raft.WithName(name), raft.WithNodes(cc), raft.WithId(id))
-	slog.Info("vals", "name", name, "port", port, "clients", cc)
+	rt := raft.NewRaft(raft.WithName(name), raft.WithNodes(nodes), raft.WithId(id))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /append", func(w http.ResponseWriter, r *http.Request) {
@@ -84,13 +84,17 @@ func Start(ctx context.Context) {
 
 		var msg entities.BroadcastMsg
 		if err := json.Unmarshal(bb, &msg); err != nil {
-			slog.Error("unmarshl msg", "err", err)
+			slog.Error("unmarshal msg", "err", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 
-		if err := rt.RcvBroadcastMsg(msg); err != nil {
-			slog.Error("broadcast", "err", err)
+		if redirectUrl, err := rt.RcvBroadcastMsg(w, msg); err != nil {
+			if errors.Is(err, raft.ErrRedirectToLeader) {
+				http.Redirect(w, r, redirectUrl, http.StatusTemporaryRedirect)
+				return
+			}
+			slog.Error("broacast msg", "err", err, "msg", msg)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}

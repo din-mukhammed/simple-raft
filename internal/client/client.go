@@ -97,3 +97,7 @@ func (c Client) AppendEntries(
 func (c Client) appendUrl() string {
 	return fmt.Sprintf("%s/append", c.uri)
 }
+
+func (c Client) Uri() string {
+	return c.uri
+}

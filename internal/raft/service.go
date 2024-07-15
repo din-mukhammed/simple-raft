@@ -2,8 +2,10 @@ package raft
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/rand"
+	"net/http"
 	"sync"
 	"time"
 
@@ -17,9 +19,14 @@ const (
 	leaderStatus
 )
 
+var (
+	ErrRedirectToLeader = errors.New("redirect to leader")
+)
+
 type RemoteClient interface {
 	AppendEntries(entities.AppendEntriesRequest) (*entities.AppendEntriesResponse, error)
 	RequestVote(entities.VoteRequest) (*entities.VoteResponse, error)
+	Uri() string
 }
 
 type Node struct {
@@ -311,9 +318,19 @@ func (s *Service) appendEntries(prefixLen, leaderCommit int, suffix entities.Log
 	}
 }
 
-func (s *Service) RcvBroadcastMsg(req entities.BroadcastMsg) error {
+func (s *Service) RcvBroadcastMsg(
+	w http.ResponseWriter,
+	req entities.BroadcastMsg,
+) (string, error) {
 	if !s.state.isLeader() {
-		return errors.New("implement forwarding to leader")
+		c := s.clientById(s.state.currentLeaderId)
+		if c == nil {
+			return "", fmt.Errorf("unknown leader: %v", s.state.currentLeaderId)
+		}
+		return fmt.Sprintf(
+			"%s/broadcast",
+			c.Uri(),
+		), ErrRedirectToLeader
 	}
 
 	s.state.logs.Append(entities.Log{
@@ -343,5 +360,14 @@ func (s *Service) RcvBroadcastMsg(req entities.BroadcastMsg) error {
 
 	wg.Wait()
 
+	return "", nil
+}
+
+func (s *Service) clientById(id int) RemoteClient {
+	for _, n := range s.nodes {
+		if n.Id == id {
+			return n.Client
+		}
+	}
 	return nil
 }

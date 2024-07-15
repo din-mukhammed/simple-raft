@@ -17,6 +17,11 @@ const (
 	leaderStatus
 )
 
+type RemoteClient interface {
+	AppendEntries(entities.AppendEntriesRequest) (*entities.AppendEntriesResponse, error)
+	RequestVote(entities.VoteRequest) (*entities.VoteResponse, error)
+}
+
 type State struct {
 	id int
 
@@ -32,38 +37,17 @@ type State struct {
 	ackedLength     map[int]int
 }
 
+type Node struct {
+	Id     int
+	Client RemoteClient
+}
+
 type Service struct {
 	name            string
 	state           State
 	candidateStopCh chan struct{}
 
-	cc []Client // should be interface
-}
-
-type Option func(*Service)
-
-func WithClient(c Client) Option {
-	return func(s *Service) {
-		s.cc = append(s.cc, c)
-	}
-}
-
-func WithClients(cc []Client) Option {
-	return func(s *Service) {
-		s.cc = cc
-	}
-}
-
-func WithName(name string) Option {
-	return func(s *Service) {
-		s.name = name
-	}
-}
-
-func WithId(id int) Option {
-	return func(s *Service) {
-		s.state.id = id
-	}
+	cc []Node // should be interface
 }
 
 func NewRaft(opts ...Option) *Service {
@@ -179,7 +163,7 @@ func (s *Service) toLeader() {
 	s.state.currentLeaderId = s.state.id
 }
 
-func (s *Service) replicateLog(c Client) error {
+func (s *Service) replicateLog(c Node) error {
 	prefixLen := s.state.sentLength[c.Id]
 	suffix := s.state.logs[prefixLen:]
 	prefixTerm := 0
@@ -187,7 +171,7 @@ func (s *Service) replicateLog(c Client) error {
 		prefixTerm = s.state.logs[prefixLen-1].Term
 	}
 	// ReplicateLog
-	ae, err := c.AppendEntries(entities.AppendEntriesRequest{
+	ae, err := c.Client.AppendEntries(entities.AppendEntriesRequest{
 		LeaderId:     s.state.id,
 		Term:         s.state.currentTerm,
 		PrefixLength: prefixLen,
@@ -256,7 +240,7 @@ func (s *Service) requestVotes() {
 		go func() {
 			defer wg.Done()
 
-			vr, err := c.RequestVote(entities.VoteRequest{
+			vr, err := c.Client.RequestVote(entities.VoteRequest{
 				Term:        s.state.currentTerm,
 				CandidateId: s.state.id,
 				LastLogInd:  s.lastLogInd(),

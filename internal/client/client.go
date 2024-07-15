@@ -1,4 +1,4 @@
-package raft
+package client
 
 import (
 	"bytes"
@@ -16,8 +16,14 @@ var httpClient = http.Client{
 }
 
 type Client struct {
-	Id  int
-	Uri string
+	uri string
+}
+
+func New(uri string) Client {
+	return Client{
+		uri: uri,
+	}
+
 }
 
 func (c Client) RequestVote(voteReq entities.VoteRequest) (*entities.VoteResponse, error) {
@@ -52,7 +58,7 @@ func (c Client) RequestVote(voteReq entities.VoteRequest) (*entities.VoteRespons
 }
 
 func (c Client) voteUrl() string {
-	return fmt.Sprintf("%s/vote", c.Uri)
+	return fmt.Sprintf("%s/vote", c.uri)
 }
 
 func (c Client) AppendEntries(
@@ -89,5 +95,5 @@ func (c Client) AppendEntries(
 }
 
 func (c Client) appendUrl() string {
-	return fmt.Sprintf("%s/append", c.Uri)
+	return fmt.Sprintf("%s/append", c.uri)
 }

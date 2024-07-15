@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/din-mukhammed/simple-raft/internal/client"
 	"github.com/din-mukhammed/simple-raft/internal/entities"
 	"github.com/din-mukhammed/simple-raft/internal/raft"
 	"github.com/din-mukhammed/simple-raft/pkg/config"
@@ -20,14 +21,14 @@ func Start(ctx context.Context) {
 	name := config.Viper().GetString("SERVER_NAME")
 	port := config.Viper().GetString("APPLICATION_PORT")
 	ss := config.Viper().GetStringSlice("servers")
-	var cc []raft.Client
+	var cc []raft.Node
 	for i, s := range ss {
-		cc = append(cc, raft.Client{
-			Id:  i,
-			Uri: s,
+		cc = append(cc, raft.Node{
+			Id:     i,
+			Client: client.New(s),
 		})
 	}
-	rt := raft.NewRaft(raft.WithName(name), raft.WithClients(cc), raft.WithId(id))
+	rt := raft.NewRaft(raft.WithName(name), raft.WithNodes(cc), raft.WithId(id))
 	slog.Info("vals", "name", name, "port", port, "clients", cc)
 
 	mux := http.NewServeMux()

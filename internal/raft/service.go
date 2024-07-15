@@ -22,21 +22,6 @@ type RemoteClient interface {
 	RequestVote(entities.VoteRequest) (*entities.VoteResponse, error)
 }
 
-type State struct {
-	id int
-
-	currentTerm  int
-	votedFor     int
-	logs         entities.Logs // logs repo
-	commitLength int
-
-	currentLeaderId int
-	status          int
-	votesReceived   map[int]struct{}
-	sentLength      map[int]int
-	ackedLength     map[int]int
-}
-
 type Node struct {
 	Id     int
 	Client RemoteClient
@@ -44,17 +29,17 @@ type Node struct {
 
 type Service struct {
 	name            string
-	state           State
+	state           state
 	candidateStopCh chan struct{}
 
-	cc []Node // should be interface
+	nodes []Node // should be interface
 }
 
 func NewRaft(opts ...Option) *Service {
 	srv := &Service{
 		name:            "default",
 		candidateStopCh: make(chan struct{}),
-		state: State{
+		state: state{
 			logs:          make(entities.Logs, 0),
 			votedFor:      -1,
 			ackedLength:   map[int]int{},
@@ -74,14 +59,14 @@ func NewRaft(opts ...Option) *Service {
 }
 
 func (s *Service) startHearbeating() {
-	t := time.NewTicker(1000 * time.Millisecond)
+	t := time.NewTicker(config.Viper().GetDuration("heartbeat_duration"))
 	defer t.Stop()
 
 	for ; true; <-t.C {
-		if !s.isLeader() {
+		if !s.state.isLeader() {
 			continue
 		}
-		for _, c := range s.cc {
+		for _, c := range s.nodes {
 			if c.Id == s.state.id {
 				continue
 			}
@@ -110,41 +95,13 @@ func (s *Service) startCandidateTicker() {
 	for {
 		select {
 		case <-t.C:
-			if s.isFollower() {
+			if s.state.isFollower() {
 				s.toCandidate()
 			}
 		case <-s.candidateStopCh:
 			t.Reset(d)
 		}
 	}
-}
-
-func (s *Service) isFollower() bool {
-	return s.state.status == followerStatus
-}
-
-func (s *Service) isCandidate() bool {
-	return s.state.status == candidateStatus
-}
-
-func (s *Service) isLeader() bool {
-	return s.state.status == leaderStatus
-}
-
-func (s *Service) lastLogInd() int {
-	n := len(s.state.logs)
-	if n == 0 {
-		return 0
-	}
-	return s.state.logs[n-1].Ind
-}
-
-func (s *Service) lastLogTerm() int {
-	n := len(s.state.logs)
-	if n == 0 {
-		return 0
-	}
-	return s.state.logs[n-1].Term
 }
 
 func (s *Service) toCandidate() {
@@ -161,6 +118,10 @@ func (s *Service) toLeader() {
 	slog.Info("I'M LEADER NOW", "name", s.name, "got votes", len(s.state.votesReceived))
 	s.state.status = leaderStatus
 	s.state.currentLeaderId = s.state.id
+}
+
+func (s *Service) resetElectionTimer() {
+	s.candidateStopCh <- struct{}{}
 }
 
 func (s *Service) replicateLog(c Node) error {
@@ -182,8 +143,7 @@ func (s *Service) replicateLog(c Node) error {
 	if err != nil {
 		return err
 	}
-	// slog.Info("response from repliation", "to", c.Id, "resp", ae)
-	if s.state.currentTerm == ae.Term && s.isLeader() {
+	if s.state.currentTerm == ae.Term && s.state.isLeader() {
 		if ae.Success && ae.NumAcked >= s.state.ackedLength[c.Id] {
 			s.state.sentLength[c.Id] = ae.NumAcked
 			s.state.ackedLength[c.Id] = ae.NumAcked
@@ -196,7 +156,7 @@ func (s *Service) replicateLog(c Node) error {
 		s.state.status = followerStatus
 		s.state.currentTerm = ae.Term
 		s.state.votedFor = -1
-		s.resetCandidateTimer()
+		s.resetElectionTimer()
 	}
 	return nil
 }
@@ -204,13 +164,13 @@ func (s *Service) replicateLog(c Node) error {
 func (s *Service) commitEntries() {
 	for s.state.commitLength < s.state.logs.Len() {
 		acks := 0
-		for _, c := range s.cc {
+		for _, c := range s.nodes {
 			if s.state.ackedLength[c.Id] > s.state.commitLength {
 				acks++
 			}
 		}
 
-		if acks >= (len(s.cc)+1)/2 {
+		if acks >= (len(s.nodes)+1)/2 {
 			slog.Info("committed log", "msg", s.state.logs[s.state.commitLength])
 			s.state.commitLength++
 		}
@@ -229,10 +189,10 @@ func (s *Service) totalVotes() int {
 func (s *Service) requestVotes() {
 	var (
 		wg = sync.WaitGroup{}
+		ct = s.state.currentTerm
 	)
-	ct := s.state.currentTerm
 
-	for _, c := range s.cc {
+	for _, c := range s.nodes {
 		if c.Id == s.state.id {
 			continue
 		}
@@ -243,14 +203,14 @@ func (s *Service) requestVotes() {
 			vr, err := c.Client.RequestVote(entities.VoteRequest{
 				Term:        s.state.currentTerm,
 				CandidateId: s.state.id,
-				LastLogInd:  s.lastLogInd(),
-				LastLogTerm: s.lastLogTerm(),
+				LastLogInd:  s.state.lastLogInd(),
+				LastLogTerm: s.state.lastLogTerm(),
 			})
 			if err != nil {
 				slog.Error("request vote", "err", err)
 				return
 			}
-			if s.isCandidate() && vr.VoteGranted && vr.Term == ct {
+			if s.state.isCandidate() && vr.VoteGranted && vr.Term == ct {
 				s.addVote(c.Id)
 				return
 			}
@@ -259,7 +219,7 @@ func (s *Service) requestVotes() {
 				s.state.status = followerStatus
 				s.state.currentTerm = vr.Term
 
-				s.resetCandidateTimer()
+				s.resetElectionTimer()
 
 				return
 			}
@@ -269,21 +229,17 @@ func (s *Service) requestVotes() {
 	wg.Wait()
 
 	totalVotes := s.totalVotes()
-	if totalVotes >= (len(s.cc)+1)/2 {
+	if totalVotes >= (len(s.nodes)+1)/2 {
 		s.toLeader()
 		return
 	}
 	slog.Info("not enough votes to become leader", "name", s.name, "got votes", totalVotes)
 }
 
-func (s *Service) resetCandidateTimer() {
-	s.candidateStopCh <- struct{}{}
-}
-
 func (s *Service) RcvRequestVote(
 	req entities.VoteRequest,
 ) (int, bool, error) {
-	s.resetCandidateTimer()
+	s.resetElectionTimer()
 
 	var (
 		candidateTerm = req.Term
@@ -298,8 +254,8 @@ func (s *Service) RcvRequestVote(
 		s.state.votedFor = -1
 	}
 
-	lt := s.lastLogTerm()
-	logOk := (lastLogTerm > lt) || (lastLogTerm == lt && lastLogInd >= s.lastLogInd())
+	lt := s.state.lastLogTerm()
+	logOk := (lastLogTerm > lt) || (lastLogTerm == lt && lastLogInd >= s.state.lastLogInd())
 
 	if candidateTerm == s.state.currentTerm && logOk &&
 		(s.state.votedFor == -1 || s.state.votedFor == candidateId) {
@@ -320,7 +276,7 @@ func (s *Service) RcvAppendEntries(
 	if s.state.currentTerm == req.Term {
 		s.state.status = followerStatus
 		s.state.currentLeaderId = req.LeaderId
-		s.resetCandidateTimer()
+		s.resetElectionTimer()
 	}
 
 	logOk := (s.state.logs.Len() >= req.PrefixLength) &&
@@ -356,7 +312,7 @@ func (s *Service) appendEntries(prefixLen, leaderCommit int, suffix entities.Log
 }
 
 func (s *Service) RcvBroadcastMsg(req entities.BroadcastMsg) error {
-	if !s.isLeader() {
+	if !s.state.isLeader() {
 		return errors.New("implement forwarding to leader")
 	}
 
@@ -369,7 +325,7 @@ func (s *Service) RcvBroadcastMsg(req entities.BroadcastMsg) error {
 	s.state.ackedLength[s.state.id] = s.state.logs.Len()
 
 	wg := sync.WaitGroup{}
-	for _, c := range s.cc {
+	for _, c := range s.nodes {
 		if c.Id == s.state.id {
 			continue
 		}

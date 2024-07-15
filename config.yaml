@@ -1,5 +1,6 @@
 servers:
     - "http://localhost:8080"
     - "http://localhost:8081"
-    # - "http://localhost:8082"
+    - "http://localhost:8082"
 initial_delay: 2s
+heartbeat_duration: 1s

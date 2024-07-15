@@ -4,13 +4,13 @@ type Option func(*Service)
 
 func WithNode(c Node) Option {
 	return func(s *Service) {
-		s.cc = append(s.cc, c)
+		s.nodes = append(s.nodes, c)
 	}
 }
 
 func WithNodes(cc []Node) Option {
 	return func(s *Service) {
-		s.cc = cc
+		s.nodes = cc
 	}
 }
 

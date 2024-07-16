@@ -98,6 +98,6 @@ func (c httpClient) appendUrl() string {
 	return fmt.Sprintf("%s/append", c.uri)
 }
 
-func (c httpClient) Uri() string {
+func (c httpClient) Addr() string {
 	return c.uri
 }

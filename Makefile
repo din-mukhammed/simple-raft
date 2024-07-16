@@ -2,9 +2,17 @@
 build:
 	go build -mod=vendor -o raft ./cmd/.
 
-.PHONY: local
-local:
-	./scripts/launch.sh rf-0 8080 0
+.PHONY: local-0
+local-0:
+	./scripts/launch.sh node-0 8080 0 grpc
+
+.PHONY: local-1
+local-1:
+	./scripts/launch.sh node-1 8081 1 grpc
+
+.PHONY: local-2
+local-2:
+	./scripts/launch.sh node-2 8082 2 grpc
 
 .PHONY: generate
 generate:

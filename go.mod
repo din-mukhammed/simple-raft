@@ -3,6 +3,7 @@ module github.com/din-mukhammed/simple-raft
 go 1.22.1
 
 require (
+	github.com/spf13/cobra v1.8.1
 	github.com/spf13/viper v1.19.0
 	google.golang.org/grpc v1.62.1
 	google.golang.org/protobuf v1.33.0
@@ -12,6 +13,7 @@ require (
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect

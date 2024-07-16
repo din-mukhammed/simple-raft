@@ -128,7 +128,7 @@ func (s *Service) startCandidateTicker() {
 }
 
 func (s *Service) toCandidate() {
-	slog.Info("starting to be candidate", "me", s.name)
+	slog.Info("starting election", "me", s.name)
 	s.state.status = candidateStatus
 	s.state.currentTerm++
 	s.state.votedFor = s.state.id

@@ -1,44 +1,14 @@
 package entities
 
-import (
-	"errors"
-)
-
 type Logs []Log
 
 func (ll Logs) Len() int {
 	return len(ll)
 }
 
-func (ll Logs) Contains(ind int) bool {
-	for _, l := range ll {
-		if l.Ind == ind {
-			return true
-		}
-	}
-	return false
-}
-
-func (ll Logs) Get(ind int) (Log, error) {
-	for _, l := range ll {
-		if l.Ind == ind {
-			return l, nil
-		}
-	}
-	return Log{}, errors.New("not exists")
-}
-
-func (ll *Logs) Remove(ind int) {
-	*ll = append((*ll)[:ind], (*ll)[ind+1:]...)
-}
-
-func (ll *Logs) Append(l Log) {
-	*ll = append(*ll, l)
-}
-
 type Log struct {
-	Ind  int
 	Term int
+	Ind  int
 	Msg  string
 }
 

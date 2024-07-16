@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -22,14 +23,18 @@ func Start(ctx context.Context) {
 	var (
 		id    = config.Viper().GetInt("SERVER_ID")
 		name  = config.Viper().GetString("SERVER_NAME")
-		port  = config.Viper().GetString("APPLICATION_PORT")
+		port  = config.Viper().GetInt("APPLICATION_PORT")
 		ss    = config.Viper().GetStringSlice("servers")
 		nodes = []raft.Node{}
 	)
 	for i, s := range ss {
+		c, err := client.NewGRPCClient(s)
+		if err != nil {
+			panic(err)
+		}
 		nodes = append(nodes, raft.Node{
 			Id:     i,
-			Client: client.New(s),
+			Client: c,
 		})
 	}
 	rt := raft.New(
@@ -38,6 +43,9 @@ func Start(ctx context.Context) {
 		raft.WithId(id),
 		raft.WithLogsRepo(logs.New()),
 	)
+
+	gs := NewGrpcService(rt)
+	gs.Run(port)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /append", func(w http.ResponseWriter, r *http.Request) {
@@ -54,13 +62,13 @@ func Start(ctx context.Context) {
 			return
 		}
 
-		term, success, numAcked, err := rt.RcvAppendEntries(aeReq)
+		resp, err := rt.RcvAppendEntries(aeReq)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 
-		bb, err = json.Marshal(entities.AppendEntriesResponse{
-			Term:     term,
-			Success:  success,
-			NumAcked: numAcked,
-		})
+		bb, err = json.Marshal(resp)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -83,7 +91,7 @@ func Start(ctx context.Context) {
 			return
 		}
 
-		if redirectUrl, err := rt.RcvBroadcastMsg(w, msg); err != nil {
+		if redirectUrl, err := rt.RcvBroadcastMsg(msg); err != nil {
 			if errors.Is(err, raft.ErrRedirectToLeader) {
 				http.Redirect(w, r, redirectUrl, http.StatusTemporaryRedirect)
 				return
@@ -110,27 +118,24 @@ func Start(ctx context.Context) {
 		}
 
 		slog.Info("request", "cmd", "vote", "req", voteReq)
-		term, success, err := rt.RcvRequestVote(voteReq)
+		resp, err := rt.RcvRequestVote(voteReq)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 
-		bb, err = json.Marshal(entities.VoteResponse{
-			Term:        term,
-			VoteGranted: success,
-		})
+		bb, err = json.Marshal(resp)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 
 		w.Write(bb)
-		slog.Info("response", "cmd", "vote", "term", term, "ok", success, "err", err)
+		slog.Info("response", "cmd", "vote", "term", resp.Term, "ok", resp.VoteGranted, "err", err)
 	})
 
 	web := &http.Server{
-		Addr:    "127.0.0.1:" + port,
+		Addr:    fmt.Sprintf("127.0.0.1:%d", port),
 		Handler: mux,
 	}
 

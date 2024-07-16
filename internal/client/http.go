@@ -11,22 +11,22 @@ import (
 	"github.com/din-mukhammed/simple-raft/internal/entities"
 )
 
-var httpClient = http.Client{
+var hc = http.Client{
 	Timeout: time.Second,
 }
 
-type Client struct {
+type httpClient struct {
 	uri string
 }
 
-func New(uri string) Client {
-	return Client{
+func NewHTTPClient(uri string) httpClient {
+	return httpClient{
 		uri: uri,
 	}
 
 }
 
-func (c Client) RequestVote(voteReq entities.VoteRequest) (*entities.VoteResponse, error) {
+func (c httpClient) RequestVote(voteReq entities.VoteRequest) (*entities.VoteResponse, error) {
 	data, err := json.Marshal(voteReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshalling: %w", err)
@@ -35,7 +35,7 @@ func (c Client) RequestVote(voteReq entities.VoteRequest) (*entities.VoteRespons
 	if err != nil {
 		return nil, err
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -57,11 +57,11 @@ func (c Client) RequestVote(voteReq entities.VoteRequest) (*entities.VoteRespons
 	return &vr, nil
 }
 
-func (c Client) voteUrl() string {
+func (c httpClient) voteUrl() string {
 	return fmt.Sprintf("%s/vote", c.uri)
 }
 
-func (c Client) AppendEntries(
+func (c httpClient) AppendEntries(
 	aeReq entities.AppendEntriesRequest,
 ) (*entities.AppendEntriesResponse, error) {
 	data, err := json.Marshal(aeReq)
@@ -72,7 +72,7 @@ func (c Client) AppendEntries(
 	if err != nil {
 		return nil, err
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -94,10 +94,10 @@ func (c Client) AppendEntries(
 	return &ar, nil
 }
 
-func (c Client) appendUrl() string {
+func (c httpClient) appendUrl() string {
 	return fmt.Sprintf("%s/append", c.uri)
 }
 
-func (c Client) Uri() string {
+func (c httpClient) Uri() string {
 	return c.uri
 }

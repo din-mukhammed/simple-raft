@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+option go_package = "github.com/din-mukhammed/simple-raft/api";
+
+package api;
+
+service RaftService {
+  rpc RequestVote (VoteRequest) returns (VoteResponse) {}
+  rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse) {}
+  rpc BroadcastMsg (BroadcastMsgRequest) returns (BroadcastMsgResponse) {}
+}
+
+message VoteRequest {
+    int64 term = 1;
+    int64 candidate_id = 2;
+    int64 last_log_ind = 3;
+    int64 last_log_term = 4;
+}
+
+message VoteResponse {
+    bool vote_granted = 1;
+    int64 term = 2;
+}
+
+message AppendEntriesRequest {
+    int64 term = 1;
+    int64 leader_id = 2;
+    int64 prefix_length = 3;
+    int64 prefix_term = 4;
+    repeated Log suffix = 5;
+    int64 commit_length = 6;
+}
+
+message AppendEntriesResponse {
+    int64 term = 1;
+    bool success = 2;
+    int64 num_acked= 3;
+}
+
+message Log {
+    int64 term = 1;
+    int64 ind = 2;
+    string msg = 3;
+}
+
+message BroadcastMsgRequest {
+    string msg = 1;
+}
+
+message BroadcastMsgResponse {
+}

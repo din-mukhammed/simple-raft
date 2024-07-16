@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
-	"net/http"
 	"sync"
 	"time"
 
@@ -26,7 +25,7 @@ var (
 type RemoteClient interface {
 	AppendEntries(entities.AppendEntriesRequest) (*entities.AppendEntriesResponse, error)
 	RequestVote(entities.VoteRequest) (*entities.VoteResponse, error)
-	Uri() string
+	Addr() string
 }
 
 type LogsRepo interface {
@@ -262,7 +261,7 @@ func (s *Service) requestVotes() {
 
 func (s *Service) RcvRequestVote(
 	req entities.VoteRequest,
-) (int, bool, error) {
+) (entities.VoteResponse, error) {
 	s.resetElectionTimer()
 
 	var (
@@ -284,15 +283,21 @@ func (s *Service) RcvRequestVote(
 	if candidateTerm == s.state.currentTerm && logOk &&
 		(s.state.votedFor == -1 || s.state.votedFor == candidateId) {
 		s.state.votedFor = candidateId
-		return s.state.currentTerm, true, nil
+		return entities.VoteResponse{
+			Term:        s.state.currentTerm,
+			VoteGranted: true,
+		}, nil
 	}
 
-	return s.state.currentTerm, false, nil
+	return entities.VoteResponse{
+		Term:        s.state.currentTerm,
+		VoteGranted: false,
+	}, nil
 }
 
 func (s *Service) RcvAppendEntries(
 	req entities.AppendEntriesRequest,
-) (int, bool, int, error) {
+) (entities.AppendEntriesResponse, error) {
 	if req.Term > s.state.currentTerm {
 		s.state.currentTerm = req.Term
 	}
@@ -309,9 +314,17 @@ func (s *Service) RcvAppendEntries(
 	if req.Term == s.state.currentTerm && logOk {
 		s.appendEntries(req.PrefixLength, req.CommitLength, req.Suffix)
 		acked := len(req.Suffix) + req.PrefixLength
-		return s.state.currentTerm, true, acked, nil
+		return entities.AppendEntriesResponse{
+			Term:     s.state.currentTerm,
+			Success:  true,
+			NumAcked: acked,
+		}, nil
 	}
-	return s.state.currentTerm, false, 0, nil
+	return entities.AppendEntriesResponse{
+		Term:     s.state.currentTerm,
+		Success:  false,
+		NumAcked: 0,
+	}, nil
 }
 
 func (s *Service) appendEntries(prefixLen, leaderCommit int, suffix entities.Logs) {
@@ -342,7 +355,6 @@ func (s *Service) appendEntries(prefixLen, leaderCommit int, suffix entities.Log
 }
 
 func (s *Service) RcvBroadcastMsg(
-	w http.ResponseWriter,
 	req entities.BroadcastMsg,
 ) (string, error) {
 	if !s.state.isLeader() {
@@ -352,7 +364,7 @@ func (s *Service) RcvBroadcastMsg(
 		}
 		return fmt.Sprintf(
 			"%s/broadcast",
-			c.Uri(),
+			c.Addr(),
 		), ErrRedirectToLeader
 	}
 

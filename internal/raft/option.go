@@ -25,3 +25,9 @@ func WithId(id int) Option {
 		s.state.id = id
 	}
 }
+
+func WithLogsRepo(lr LogsRepo) Option {
+	return func(s *Service) {
+		s.state.logs = lr
+	}
+}

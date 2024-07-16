@@ -29,6 +29,16 @@ type RemoteClient interface {
 	Uri() string
 }
 
+type LogsRepo interface {
+	Add(entities.Log)
+	Len() int
+	Suffix(int) entities.Logs
+	Get(int) entities.Log
+	Cut(int)
+	LastLogInd() int
+	LastLogTerm() int
+}
+
 type Node struct {
 	Id     int
 	Client RemoteClient
@@ -42,12 +52,11 @@ type Service struct {
 	nodes []Node // should be interface
 }
 
-func NewRaft(opts ...Option) *Service {
+func New(opts ...Option) *Service {
 	srv := &Service{
 		name:            "default",
 		candidateStopCh: make(chan struct{}),
 		state: state{
-			logs:          make(entities.Logs, 0),
 			votedFor:      -1,
 			ackedLength:   map[int]int{},
 			sentLength:    map[int]int{},
@@ -73,20 +82,28 @@ func (s *Service) startHearbeating() {
 		if !s.state.isLeader() {
 			continue
 		}
+		wg := sync.WaitGroup{}
 		for _, c := range s.nodes {
 			if c.Id == s.state.id {
 				continue
 			}
 
-			s.state.sentLength[c.Id] = len(s.state.logs)
-			s.state.ackedLength[c.Id] = 0
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 
-			err := s.replicateLog(c)
-			if err != nil {
-				slog.Error("replicate log", "client", c.Id, "err", err)
-				continue
-			}
+				s.state.sentLength[c.Id] = s.state.logs.Len()
+				s.state.ackedLength[c.Id] = 0
+
+				err := s.replicateLog(c)
+				if err != nil {
+					slog.Error("replicate log", "client", c.Id, "err", err)
+					return
+				}
+			}()
 		}
+
+		wg.Wait()
 	}
 }
 
@@ -133,10 +150,10 @@ func (s *Service) resetElectionTimer() {
 
 func (s *Service) replicateLog(c Node) error {
 	prefixLen := s.state.sentLength[c.Id]
-	suffix := s.state.logs[prefixLen:]
+	suffix := s.state.logs.Suffix(prefixLen)
 	prefixTerm := 0
 	if prefixLen > 0 {
-		prefixTerm = s.state.logs[prefixLen-1].Term
+		prefixTerm = s.state.logs.Get(prefixLen - 1).Term
 	}
 	// ReplicateLog
 	ae, err := c.Client.AppendEntries(entities.AppendEntriesRequest{
@@ -178,7 +195,7 @@ func (s *Service) commitEntries() {
 		}
 
 		if acks >= (len(s.nodes)+1)/2 {
-			slog.Info("committed log", "msg", s.state.logs[s.state.commitLength])
+			slog.Info("committed log", "msg", s.state.logs.Get(s.state.commitLength))
 			s.state.commitLength++
 		}
 	}
@@ -210,8 +227,8 @@ func (s *Service) requestVotes() {
 			vr, err := c.Client.RequestVote(entities.VoteRequest{
 				Term:        s.state.currentTerm,
 				CandidateId: s.state.id,
-				LastLogInd:  s.state.lastLogInd(),
-				LastLogTerm: s.state.lastLogTerm(),
+				LastLogInd:  s.state.logs.LastLogInd(),
+				LastLogTerm: s.state.logs.LastLogTerm(),
 			})
 			if err != nil {
 				slog.Error("request vote", "err", err)
@@ -261,8 +278,8 @@ func (s *Service) RcvRequestVote(
 		s.state.votedFor = -1
 	}
 
-	lt := s.state.lastLogTerm()
-	logOk := (lastLogTerm > lt) || (lastLogTerm == lt && lastLogInd >= s.state.lastLogInd())
+	lt := s.state.logs.LastLogTerm()
+	logOk := (lastLogTerm > lt) || (lastLogTerm == lt && lastLogInd >= s.state.logs.LastLogInd())
 
 	if candidateTerm == s.state.currentTerm && logOk &&
 		(s.state.votedFor == -1 || s.state.votedFor == candidateId) {
@@ -287,7 +304,7 @@ func (s *Service) RcvAppendEntries(
 	}
 
 	logOk := (s.state.logs.Len() >= req.PrefixLength) &&
-		(req.PrefixLength == 0 || s.state.logs[req.PrefixLength-1].Term == req.Term)
+		(req.PrefixLength == 0 || s.state.logs.Get(req.PrefixLength-1).Term == req.Term)
 
 	if req.Term == s.state.currentTerm && logOk {
 		s.appendEntries(req.PrefixLength, req.CommitLength, req.Suffix)
@@ -300,19 +317,25 @@ func (s *Service) RcvAppendEntries(
 func (s *Service) appendEntries(prefixLen, leaderCommit int, suffix entities.Logs) {
 	if suffix.Len() > 0 && s.state.logs.Len() > prefixLen {
 		ind := min(s.state.logs.Len(), prefixLen+suffix.Len()) - 1
-		if s.state.logs[ind].Term != suffix[ind-prefixLen].Term {
-			s.state.logs = s.state.logs[:ind]
+		if s.state.logs.Get(ind).Term != suffix[ind-prefixLen].Term {
+			s.state.logs.Cut(ind)
 		}
 	}
 	if prefixLen+suffix.Len() > s.state.logs.Len() {
 		for i := s.state.logs.Len() - prefixLen; i < suffix.Len(); i++ {
-			s.state.logs.Append(suffix[i])
+			s.state.logs.Add(suffix[i])
 		}
 	}
 
 	if leaderCommit > s.state.commitLength {
 		for i := s.state.commitLength; i < leaderCommit; i++ {
-			slog.Info("commited msg", "log ind", s.state.logs[i].Ind, "msg", s.state.logs[i].Msg)
+			slog.Info(
+				"commited msg",
+				"log ind",
+				s.state.logs.Get(i).Ind,
+				"msg",
+				s.state.logs.Get(i).Msg,
+			)
 		}
 		s.state.commitLength = leaderCommit
 	}
@@ -333,8 +356,8 @@ func (s *Service) RcvBroadcastMsg(
 		), ErrRedirectToLeader
 	}
 
-	s.state.logs.Append(entities.Log{
-		Ind:  len(s.state.logs),
+	s.state.logs.Add(entities.Log{
+		Ind:  s.state.logs.Len(),
 		Term: s.state.currentTerm,
 		Msg:  req.Msg,
 	})

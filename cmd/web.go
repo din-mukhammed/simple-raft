@@ -14,22 +14,30 @@ import (
 	"github.com/din-mukhammed/simple-raft/internal/client"
 	"github.com/din-mukhammed/simple-raft/internal/entities"
 	"github.com/din-mukhammed/simple-raft/internal/raft"
+	"github.com/din-mukhammed/simple-raft/internal/repositories/logs"
 	"github.com/din-mukhammed/simple-raft/pkg/config"
 )
 
 func Start(ctx context.Context) {
-	id := config.Viper().GetInt("SERVER_ID")
-	name := config.Viper().GetString("SERVER_NAME")
-	port := config.Viper().GetString("APPLICATION_PORT")
-	ss := config.Viper().GetStringSlice("servers")
-	var nodes []raft.Node
+	var (
+		id    = config.Viper().GetInt("SERVER_ID")
+		name  = config.Viper().GetString("SERVER_NAME")
+		port  = config.Viper().GetString("APPLICATION_PORT")
+		ss    = config.Viper().GetStringSlice("servers")
+		nodes = []raft.Node{}
+	)
 	for i, s := range ss {
 		nodes = append(nodes, raft.Node{
 			Id:     i,
 			Client: client.New(s),
 		})
 	}
-	rt := raft.NewRaft(raft.WithName(name), raft.WithNodes(nodes), raft.WithId(id))
+	rt := raft.New(
+		raft.WithName(name),
+		raft.WithNodes(nodes),
+		raft.WithId(id),
+		raft.WithLogsRepo(logs.New()),
+	)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /append", func(w http.ResponseWriter, r *http.Request) {
@@ -46,21 +54,7 @@ func Start(ctx context.Context) {
 			return
 		}
 
-		// slog.Info("request", "cmd", "append entries", "req", aeReq)
 		term, success, numAcked, err := rt.RcvAppendEntries(aeReq)
-		// slog.Info(
-		// 	"response",
-		// 	"cmd",
-		// 	"append entries",
-		// 	"term",
-		// 	term,
-		// 	"ok",
-		// 	success,
-		// 	"err",
-		// 	err,
-		// 	"num acked",
-		// 	numAcked,
-		// )
 
 		bb, err = json.Marshal(entities.AppendEntriesResponse{
 			Term:     term,

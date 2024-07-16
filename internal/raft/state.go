@@ -1,13 +1,11 @@
 package raft
 
-import "github.com/din-mukhammed/simple-raft/internal/entities"
-
 type state struct {
 	id int
 
 	currentTerm  int
 	votedFor     int
-	logs         entities.Logs // logs repo
+	logs         LogsRepo
 	commitLength int
 
 	currentLeaderId int
@@ -27,20 +25,4 @@ func (s state) isCandidate() bool {
 
 func (s state) isLeader() bool {
 	return s.status == leaderStatus
-}
-
-func (s state) lastLogInd() int {
-	n := len(s.logs)
-	if n == 0 {
-		return 0
-	}
-	return s.logs[n-1].Ind
-}
-
-func (s state) lastLogTerm() int {
-	n := len(s.logs)
-	if n == 0 {
-		return 0
-	}
-	return s.logs[n-1].Term
 }

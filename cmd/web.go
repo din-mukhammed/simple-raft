@@ -2,10 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,7 +10,7 @@ import (
 	"syscall"
 
 	"github.com/din-mukhammed/simple-raft/internal/client"
-	"github.com/din-mukhammed/simple-raft/internal/entities"
+	"github.com/din-mukhammed/simple-raft/internal/controller"
 	"github.com/din-mukhammed/simple-raft/internal/raft"
 	"github.com/din-mukhammed/simple-raft/internal/repositories/logs"
 	"github.com/din-mukhammed/simple-raft/pkg/config"
@@ -41,97 +38,18 @@ var (
 					Client: c,
 				})
 			}
-			rt := raft.New(
-				raft.WithName(name),
-				raft.WithNodes(nodes),
-				raft.WithId(id),
-				raft.WithLogsRepo(logs.New()),
+			var (
+				rt = raft.New(
+					raft.WithName(name),
+					raft.WithNodes(nodes),
+					raft.WithId(id),
+					raft.WithLogsRepo(logs.New()),
+				)
+				cntr = controller.NewHTTPController(rt)
+
+				mux = http.NewServeMux()
 			)
-
-			mux := http.NewServeMux()
-			mux.HandleFunc("PUT /append", func(w http.ResponseWriter, r *http.Request) {
-				var aeReq entities.AppendEntriesRequest
-
-				bb, err := io.ReadAll(r.Body)
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-
-				if err := json.Unmarshal(bb, &aeReq); err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-
-				resp, err := rt.RcvAppendEntries(aeReq)
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-
-				bb, err = json.Marshal(resp)
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-
-				w.Write(bb)
-			})
-
-			mux.HandleFunc("POST /broadcast", func(w http.ResponseWriter, r *http.Request) {
-				bb, err := io.ReadAll(r.Body)
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-
-				var msg entities.BroadcastMsg
-				if err := json.Unmarshal(bb, &msg); err != nil {
-					slog.Error("unmarshal msg", "err", err)
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-
-				if redirectUrl, err := rt.RcvBroadcastMsg(msg); err != nil {
-					if errors.Is(err, raft.ErrRedirectToLeader) {
-						http.Redirect(w, r, redirectUrl, http.StatusTemporaryRedirect)
-						return
-					}
-					slog.Error("broacast msg", "err", err, "msg", msg)
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-				w.WriteHeader(http.StatusOK)
-			})
-
-			mux.HandleFunc("PUT /vote", func(w http.ResponseWriter, r *http.Request) {
-				var voteReq entities.VoteRequest
-
-				bb, err := io.ReadAll(r.Body)
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-
-				if err := json.Unmarshal(bb, &voteReq); err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-
-				resp, err := rt.RcvRequestVote(voteReq)
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-
-				bb, err = json.Marshal(resp)
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-
-				w.Write(bb)
-			})
+			cntr.AddRoutes(mux)
 
 			web := &http.Server{
 				Addr:    fmt.Sprintf("127.0.0.1:%d", port),

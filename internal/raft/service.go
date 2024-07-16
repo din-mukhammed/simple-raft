@@ -259,7 +259,7 @@ func (s *Service) requestVotes() {
 	slog.Info("not enough votes to become leader", "name", s.name, "got votes", totalVotes)
 }
 
-func (s *Service) RcvRequestVote(
+func (s *Service) RequestVote(
 	req entities.VoteRequest,
 ) (entities.VoteResponse, error) {
 	s.resetElectionTimer()
@@ -295,7 +295,7 @@ func (s *Service) RcvRequestVote(
 	}, nil
 }
 
-func (s *Service) RcvAppendEntries(
+func (s *Service) AppendEntries(
 	req entities.AppendEntriesRequest,
 ) (entities.AppendEntriesResponse, error) {
 	if req.Term > s.state.currentTerm {
@@ -354,7 +354,7 @@ func (s *Service) appendEntries(prefixLen, leaderCommit int, suffix entities.Log
 	}
 }
 
-func (s *Service) RcvBroadcastMsg(
+func (s *Service) BroadcastMsg(
 	req entities.BroadcastMsg,
 ) (string, error) {
 	if !s.state.isLeader() {

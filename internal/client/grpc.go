@@ -29,12 +29,14 @@ func NewGRPCClient(addr string) (grpcClient, error) {
 	}, nil
 }
 
-func (g grpcClient) RequestVote(voteReq entities.VoteRequest) (*entities.VoteResponse, error) {
-	// TODO: use upstream context
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+func (g grpcClient) RequestVote(
+	ctx context.Context,
+	voteReq entities.VoteRequest,
+) (*entities.VoteResponse, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 
-	resp, err := g.client.RequestVote(ctx, &api.VoteRequest{
+	resp, err := g.client.RequestVote(reqCtx, &api.VoteRequest{
 		Term:        int64(voteReq.Term),
 		CandidateId: int64(voteReq.CandidateId),
 		LastLogInd:  int64(voteReq.LastLogInd),
@@ -51,10 +53,10 @@ func (g grpcClient) RequestVote(voteReq entities.VoteRequest) (*entities.VoteRes
 }
 
 func (g grpcClient) AppendEntries(
+	ctx context.Context,
 	aeReq entities.AppendEntriesRequest,
 ) (*entities.AppendEntriesResponse, error) {
-	// TODO: use upstream context
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 
 	ll := make([]*api.Log, 0, aeReq.Suffix.Len())
@@ -66,7 +68,7 @@ func (g grpcClient) AppendEntries(
 		})
 	}
 
-	resp, err := g.client.AppendEntries(ctx, &api.AppendEntriesRequest{
+	resp, err := g.client.AppendEntries(reqCtx, &api.AppendEntriesRequest{
 		Term:         int64(aeReq.Term),
 		LeaderId:     int64(aeReq.LeaderId),
 		PrefixLength: int64(aeReq.LeaderId),

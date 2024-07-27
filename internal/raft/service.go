@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -23,8 +24,11 @@ var (
 )
 
 type RemoteClient interface {
-	AppendEntries(entities.AppendEntriesRequest) (*entities.AppendEntriesResponse, error)
-	RequestVote(entities.VoteRequest) (*entities.VoteResponse, error)
+	AppendEntries(
+		context.Context,
+		entities.AppendEntriesRequest,
+	) (*entities.AppendEntriesResponse, error)
+	RequestVote(context.Context, entities.VoteRequest) (*entities.VoteResponse, error)
 	Addr() string
 }
 
@@ -148,14 +152,18 @@ func (s *Service) resetElectionTimer() {
 }
 
 func (s *Service) replicateLog(c Node) error {
-	prefixLen := s.state.sentLength[c.Id]
-	suffix := s.state.logs.Suffix(prefixLen)
-	prefixTerm := 0
+	var (
+		prefixLen   = s.state.sentLength[c.Id]
+		suffix      = s.state.logs.Suffix(prefixLen)
+		prefixTerm  = 0
+		ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	)
+	defer cancel()
 	if prefixLen > 0 {
 		prefixTerm = s.state.logs.Get(prefixLen - 1).Term
 	}
 	// ReplicateLog
-	ae, err := c.Client.AppendEntries(entities.AppendEntriesRequest{
+	ae, err := c.Client.AppendEntries(ctx, entities.AppendEntriesRequest{
 		LeaderId:     s.state.id,
 		Term:         s.state.currentTerm,
 		PrefixLength: prefixLen,
@@ -211,9 +219,11 @@ func (s *Service) totalVotes() int {
 
 func (s *Service) requestVotes() {
 	var (
-		wg = sync.WaitGroup{}
-		ct = s.state.currentTerm
+		wg          = sync.WaitGroup{}
+		ct          = s.state.currentTerm
+		ctx, cancel = context.WithTimeout(context.Background(), time.Second)
 	)
+	defer cancel()
 
 	for _, c := range s.nodes {
 		if c.Id == s.state.id {
@@ -223,7 +233,7 @@ func (s *Service) requestVotes() {
 		go func() {
 			defer wg.Done()
 
-			vr, err := c.Client.RequestVote(entities.VoteRequest{
+			vr, err := c.Client.RequestVote(ctx, entities.VoteRequest{
 				Term:        s.state.currentTerm,
 				CandidateId: s.state.id,
 				LastLogInd:  s.state.logs.LastLogInd(),

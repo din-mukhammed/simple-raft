@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,12 +27,15 @@ func NewHTTPClient(uri string) httpClient {
 
 }
 
-func (c httpClient) RequestVote(voteReq entities.VoteRequest) (*entities.VoteResponse, error) {
+func (c httpClient) RequestVote(
+	ctx context.Context,
+	voteReq entities.VoteRequest,
+) (*entities.VoteResponse, error) {
 	data, err := json.Marshal(voteReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshalling: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPut, c.voteUrl(), bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.voteUrl(), bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
@@ -62,13 +66,19 @@ func (c httpClient) voteUrl() string {
 }
 
 func (c httpClient) AppendEntries(
+	ctx context.Context,
 	aeReq entities.AppendEntriesRequest,
 ) (*entities.AppendEntriesResponse, error) {
 	data, err := json.Marshal(aeReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshalling: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPut, c.appendUrl(), bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPut,
+		c.appendUrl(),
+		bytes.NewReader(data),
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -91,12 +91,14 @@ func (s *Service) startHearbeating() {
 				continue
 			}
 
+			s.state.withLock(func() {
+				s.state.sentLength[c.Id] = s.state.logs.Len()
+				s.state.ackedLength[c.Id] = 0
+			})
+
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-
-				s.state.sentLength[c.Id] = s.state.logs.Len()
-				s.state.ackedLength[c.Id] = 0
 
 				err := s.replicateLog(c)
 				if err != nil {
@@ -133,18 +135,22 @@ func (s *Service) startCandidateTicker() {
 
 func (s *Service) toCandidate() {
 	slog.Info("starting election", "me", s.name)
-	s.state.status = candidateStatus
-	s.state.currentTerm++
-	s.state.votedFor = s.state.id
-	s.state.votesReceived[s.state.id] = struct{}{}
+	s.state.withLock(func() {
+		s.state.status = candidateStatus
+		s.state.currentTerm++
+		s.state.votedFor = s.state.id
+		s.state.votesReceived[s.state.id] = struct{}{}
+	})
 
 	s.requestVotes()
 }
 
 func (s *Service) toLeader() {
 	slog.Info("I'M LEADER NOW", "name", s.name, "got votes", len(s.state.votesReceived))
-	s.state.status = leaderStatus
-	s.state.currentLeaderId = s.state.id
+	s.state.withLock(func() {
+		s.state.status = leaderStatus
+		s.state.currentLeaderId = s.state.id
+	})
 }
 
 func (s *Service) resetElectionTimer() {
@@ -153,7 +159,7 @@ func (s *Service) resetElectionTimer() {
 
 func (s *Service) replicateLog(c Node) error {
 	var (
-		prefixLen   = s.state.sentLength[c.Id]
+		prefixLen   = s.state.sentLengthById(c.Id)
 		suffix      = s.state.logs.Suffix(prefixLen)
 		prefixTerm  = 0
 		ctx, cancel = context.WithTimeout(context.Background(), time.Second)
@@ -165,7 +171,7 @@ func (s *Service) replicateLog(c Node) error {
 	// ReplicateLog
 	ae, err := c.Client.AppendEntries(ctx, entities.AppendEntriesRequest{
 		LeaderId:     s.state.id,
-		Term:         s.state.currentTerm,
+		Term:         s.state.getCurrentTerm(),
 		PrefixLength: prefixLen,
 		PrefixTerm:   prefixTerm,
 		Suffix:       suffix,
@@ -174,24 +180,32 @@ func (s *Service) replicateLog(c Node) error {
 	if err != nil {
 		return err
 	}
-	if s.state.currentTerm == ae.Term && s.state.isLeader() {
-		if ae.Success && ae.NumAcked >= s.state.ackedLength[c.Id] {
-			s.state.sentLength[c.Id] = ae.NumAcked
-			s.state.ackedLength[c.Id] = ae.NumAcked
-			s.commitEntries()
-		} else if s.state.sentLength[c.Id] > 0 {
-			s.state.sentLength[c.Id] = s.state.sentLength[c.Id] - 1
+	if s.state.getCurrentTerm() == ae.Term && s.state.isLeader() {
+		if ae.Success && ae.NumAcked >= s.state.ackedLengthById(c.Id) {
+			s.state.withLock(func() {
+				s.state.sentLength[c.Id] = ae.NumAcked
+				s.state.ackedLength[c.Id] = ae.NumAcked
+
+				s.commitEntries()
+			})
+		} else if s.state.sentLengthById(c.Id) > 0 {
+			s.state.withLock(func() {
+				s.state.sentLength[c.Id] = s.state.sentLength[c.Id] - 1
+			})
 			return s.replicateLog(c)
 		}
-	} else if s.state.currentTerm < ae.Term {
-		s.state.status = followerStatus
-		s.state.currentTerm = ae.Term
-		s.state.votedFor = -1
+	} else if s.state.getCurrentTerm() < ae.Term {
+		s.state.withLock(func() {
+			s.state.status = followerStatus
+			s.state.currentTerm = ae.Term
+			s.state.votedFor = -1
+		})
 		s.resetElectionTimer()
 	}
 	return nil
 }
 
+// runs under lock
 func (s *Service) commitEntries() {
 	for s.state.commitLength < s.state.logs.Len() {
 		acks := 0
@@ -209,12 +223,17 @@ func (s *Service) commitEntries() {
 }
 
 func (s *Service) addVote(id int) {
-	s.state.votesReceived[id] = struct{}{}
+	s.state.withLock(func() {
+		s.state.votesReceived[id] = struct{}{}
+	})
 }
 
 func (s *Service) totalVotes() int {
-
-	return len(s.state.votesReceived)
+	res := 0
+	s.state.withLock(func() {
+		res = len(s.state.votesReceived)
+	})
+	return res
 }
 
 func (s *Service) requestVotes() {
@@ -234,7 +253,7 @@ func (s *Service) requestVotes() {
 			defer wg.Done()
 
 			vr, err := c.Client.RequestVote(ctx, entities.VoteRequest{
-				Term:        s.state.currentTerm,
+				Term:        s.state.getCurrentTerm(),
 				CandidateId: s.state.id,
 				LastLogInd:  s.state.logs.LastLogInd(),
 				LastLogTerm: s.state.logs.LastLogTerm(),
@@ -243,14 +262,16 @@ func (s *Service) requestVotes() {
 				slog.Error("request vote", "err", err)
 				return
 			}
-			if s.state.isCandidate() && vr.VoteGranted && vr.Term == ct {
+			if s.state.isCandidate() && vr.VoteGranted && vr.Term == s.state.getCurrentTerm() {
 				s.addVote(c.Id)
 				return
 			}
 			if vr.Term > ct {
-				s.state.votedFor = -1
-				s.state.status = followerStatus
-				s.state.currentTerm = vr.Term
+				s.state.withLock(func() {
+					s.state.votedFor = -1
+					s.state.status = followerStatus
+					s.state.currentTerm = vr.Term
+				})
 
 				s.resetElectionTimer()
 
@@ -273,7 +294,6 @@ func (s *Service) RequestVote(
 	req entities.VoteRequest,
 ) (entities.VoteResponse, error) {
 	s.resetElectionTimer()
-
 	var (
 		candidateTerm = req.Term
 		candidateId   = req.CandidateId
@@ -281,26 +301,28 @@ func (s *Service) RequestVote(
 		lastLogTerm   = req.LastLogTerm
 	)
 
-	if candidateTerm > s.state.currentTerm {
-		s.state.currentTerm = candidateTerm
-		s.state.status = followerStatus
-		s.state.votedFor = -1
-	}
+	s.state.withLock(func() {
+		if candidateTerm > s.state.currentTerm {
+			s.state.currentTerm = candidateTerm
+			s.state.status = followerStatus
+			s.state.votedFor = -1
+		}
+	})
 
 	lt := s.state.logs.LastLogTerm()
 	logOk := (lastLogTerm > lt) || (lastLogTerm == lt && lastLogInd >= s.state.logs.LastLogInd())
 
-	if candidateTerm == s.state.currentTerm && logOk &&
+	if candidateTerm == s.state.getCurrentTerm() && logOk &&
 		(s.state.votedFor == -1 || s.state.votedFor == candidateId) {
 		s.state.votedFor = candidateId
 		return entities.VoteResponse{
-			Term:        s.state.currentTerm,
+			Term:        s.state.getCurrentTerm(),
 			VoteGranted: true,
 		}, nil
 	}
 
 	return entities.VoteResponse{
-		Term:        s.state.currentTerm,
+		Term:        s.state.getCurrentTerm(),
 		VoteGranted: false,
 	}, nil
 }
@@ -308,24 +330,28 @@ func (s *Service) RequestVote(
 func (s *Service) AppendEntries(
 	req entities.AppendEntriesRequest,
 ) (entities.AppendEntriesResponse, error) {
-	if req.Term > s.state.currentTerm {
-		s.state.currentTerm = req.Term
-	}
+	s.state.withLock(func() {
+		if req.Term > s.state.currentTerm {
+			s.state.currentTerm = req.Term
+		}
 
-	if s.state.currentTerm == req.Term {
-		s.state.status = followerStatus
-		s.state.currentLeaderId = req.LeaderId
-		s.resetElectionTimer()
-	}
+		if s.state.currentTerm == req.Term {
+			s.state.status = followerStatus
+			s.state.currentLeaderId = req.LeaderId
+			s.resetElectionTimer()
+		}
+	})
 
 	logOk := (s.state.logs.Len() >= req.PrefixLength) &&
 		(req.PrefixLength == 0 || s.state.logs.Get(req.PrefixLength-1).Term == req.Term)
 
-	if req.Term == s.state.currentTerm && logOk {
-		s.appendEntries(req.PrefixLength, req.CommitLength, req.Suffix)
+	if req.Term == s.state.getCurrentTerm() && logOk {
+		s.state.withLock(func() {
+			s.appendEntries(req.PrefixLength, req.CommitLength, req.Suffix)
+		})
 		acked := len(req.Suffix) + req.PrefixLength
 		return entities.AppendEntriesResponse{
-			Term:     s.state.currentTerm,
+			Term:     s.state.getCurrentTerm(),
 			Success:  true,
 			NumAcked: acked,
 		}, nil
@@ -337,6 +363,7 @@ func (s *Service) AppendEntries(
 	}, nil
 }
 
+// runs under lock
 func (s *Service) appendEntries(prefixLen, leaderCommit int, suffix entities.Logs) {
 	if suffix.Len() > 0 && s.state.logs.Len() > prefixLen {
 		ind := min(s.state.logs.Len(), prefixLen+suffix.Len()) - 1
@@ -384,7 +411,9 @@ func (s *Service) BroadcastMsg(
 		Msg:  req.Msg,
 	})
 
-	s.state.ackedLength[s.state.id] = s.state.logs.Len()
+	s.state.withLock(func() {
+		s.state.ackedLength[s.state.id] = s.state.logs.Len()
+	})
 
 	wg := sync.WaitGroup{}
 	for _, c := range s.nodes {

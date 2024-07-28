@@ -1,6 +1,6 @@
 .PHONY: build
 build:
-	go build -mod=vendor -o raft ./cmd/.
+	go build -mod=vendor -race -o raft ./cmd/.
 
 .PHONY: local-0
 local-0:

@@ -8,8 +8,8 @@ import (
 )
 
 type RaftService interface {
-	RequestVote(entities.VoteRequest) (entities.VoteResponse, error)
-	AppendEntries(entities.AppendEntriesRequest) (entities.AppendEntriesResponse, error)
+	OnRequestVote(entities.VoteRequest) (entities.VoteResponse, error)
+	OnAppendEntries(entities.AppendEntriesRequest) (entities.AppendEntriesResponse, error)
 	BroadcastMsg(entities.BroadcastMsg) (string, error)
 }
 
@@ -29,7 +29,7 @@ func (s *grpcController) RequestVote(
 	ctx context.Context,
 	req *api.VoteRequest,
 ) (*api.VoteResponse, error) {
-	resp, err := s.raftService.RequestVote(entities.VoteRequest{
+	resp, err := s.raftService.OnRequestVote(entities.VoteRequest{
 		Term:        int(req.GetTerm()),
 		CandidateId: int(req.GetCandidateId()),
 		LastLogInd:  int(req.GetLastLogInd()),
@@ -57,7 +57,7 @@ func (s *grpcController) AppendEntries(
 			Msg:  l.GetMsg(),
 		})
 	}
-	resp, err := s.raftService.AppendEntries(entities.AppendEntriesRequest{
+	resp, err := s.raftService.OnAppendEntries(entities.AppendEntriesRequest{
 		Term:         int(req.GetTerm()),
 		LeaderId:     int(req.GetLeaderId()),
 		PrefixLength: int(req.GetPrefixLength()),

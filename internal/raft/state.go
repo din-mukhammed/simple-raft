@@ -7,6 +7,7 @@ import (
 type state struct {
 	id int
 
+	// should be persistent
 	currentTerm  int
 	votedFor     int
 	logs         LogsRepo

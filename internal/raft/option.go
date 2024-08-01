@@ -1,5 +1,7 @@
 package raft
 
+import "time"
+
 type Option func(*Service)
 
 func WithNode(c Node) Option {
@@ -29,5 +31,17 @@ func WithId(id int) Option {
 func WithLogsRepo(lr LogsRepo) Option {
 	return func(s *Service) {
 		s.state.logs = lr
+	}
+}
+
+func WithCandidateTimeout(t time.Duration) Option {
+	return func(s *Service) {
+		s.candidateTimeout = t
+	}
+}
+
+func WithHeartbeatTick(t time.Duration) Option {
+	return func(s *Service) {
+		s.heartbeatTick = t
 	}
 }

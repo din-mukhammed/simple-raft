@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/din-mukhammed/simple-raft/internal/entities"
-	"github.com/din-mukhammed/simple-raft/pkg/config"
 )
 
 const (
@@ -52,13 +51,18 @@ type Service struct {
 	state           state
 	candidateStopCh chan struct{}
 
+	candidateTimeout time.Duration
+	heartbeatTick    time.Duration
+
 	nodes []Node // should be interface
 }
 
 func New(opts ...Option) *Service {
 	srv := &Service{
-		name:            "default",
-		candidateStopCh: make(chan struct{}),
+		name:             "default",
+		candidateStopCh:  make(chan struct{}),
+		candidateTimeout: 2 * time.Second,
+		heartbeatTick:    time.Second,
 		state: state{
 			votedFor:      -1,
 			ackedLength:   map[int]int{},
@@ -71,14 +75,16 @@ func New(opts ...Option) *Service {
 		o(srv)
 	}
 
-	go srv.startCandidateTicker()
-	go srv.startHearbeating()
-
 	return srv
 }
 
+func (s *Service) Start() {
+	go s.startCandidateTicker()
+	s.startHearbeating()
+}
+
 func (s *Service) startHearbeating() {
-	t := time.NewTicker(config.Viper().GetDuration("heartbeat_duration"))
+	t := time.NewTicker(s.heartbeatTick)
 	defer t.Stop()
 
 	for ; true; <-t.C {
@@ -113,11 +119,7 @@ func (s *Service) startHearbeating() {
 }
 
 func (s *Service) startCandidateTicker() {
-	d := config.Viper().
-		GetDuration("initial_delay") +
-		time.Duration(
-			rand.Intn(100)*int(time.Millisecond),
-		)
+	d := s.candidateTimeout + time.Duration(rand.Intn(10)*int(time.Millisecond))
 	t := time.NewTicker(d)
 	defer t.Stop()
 
@@ -290,7 +292,7 @@ func (s *Service) requestVotes() {
 	slog.Info("not enough votes to become leader", "name", s.name, "got votes", totalVotes)
 }
 
-func (s *Service) RequestVote(
+func (s *Service) OnRequestVote(
 	req entities.VoteRequest,
 ) (entities.VoteResponse, error) {
 	s.resetElectionTimer()
@@ -327,7 +329,7 @@ func (s *Service) RequestVote(
 	}, nil
 }
 
-func (s *Service) AppendEntries(
+func (s *Service) OnAppendEntries(
 	req entities.AppendEntriesRequest,
 ) (entities.AppendEntriesResponse, error) {
 	s.state.withLock(func() {

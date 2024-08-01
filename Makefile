@@ -4,15 +4,20 @@ build:
 
 .PHONY: local-0
 local-0:
-	./scripts/launch.sh node-0 8080 0 grpc
+	./scripts/launch.sh node-0 8080 0 http
 
 .PHONY: local-1
 local-1:
-	./scripts/launch.sh node-1 8081 1 grpc
+	./scripts/launch.sh node-1 8081 1 http
 
 .PHONY: local-2
 local-2:
-	./scripts/launch.sh node-2 8082 2 grpc
+	./scripts/launch.sh node-2 8082 2 http
+
+.PHONY: test
+test:
+	go test -v ./...
+
 
 .PHONY: generate
 generate:

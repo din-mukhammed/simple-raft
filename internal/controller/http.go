@@ -38,7 +38,7 @@ func (hc *httpController) AddRoutes(mux *http.ServeMux) {
 			return
 		}
 
-		resp, err := hc.rt.AppendEntries(aeReq)
+		resp, err := hc.rt.OnAppendEntries(aeReq)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -93,7 +93,7 @@ func (hc *httpController) AddRoutes(mux *http.ServeMux) {
 			return
 		}
 
-		resp, err := hc.rt.RequestVote(voteReq)
+		resp, err := hc.rt.OnRequestVote(voteReq)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return

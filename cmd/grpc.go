@@ -54,6 +54,8 @@ var (
 			gs := grpc.NewServer(opts...)
 			api.RegisterRaftServiceServer(gs, cntr)
 
+			go rt.Start()
+
 			slog.Info("starting grpc server", "port", port)
 			lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", port))
 			if err != nil {
